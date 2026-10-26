@@ -1,5 +1,7 @@
 # CRM — Agencia de Viajes (Demo Técnica)
 
+> 🌊 Parte del portafolio de **José Aponte** · [rexoneitor.github.io](https://rexoneitor.github.io)
+
 > **Nota:** Este repositorio es una versión de demostración técnica del sistema de gestión interna (CRM/ERP ligero) desarrollado para una agencia de viajes.  
 > **Todo el contenido y las bases de datos incluidas utilizan datos sintéticos generados mediante seeds para fines de prueba de concepto.** No contiene datos personales ni contratos reales.
 
