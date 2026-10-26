@@ -1,0 +1,230 @@
+@import "tailwindcss";
+
+/* ── Sistema de diseño · Agencia Demo (DEMO) ─────────────────────
+   Un único lugar para color, radios, sombras y tipografía.
+   Paleta de marca: azul océano DEMO (principal), dorado sol (acento) y una
+   barra lateral azul noche que se mantiene igual en claro y oscuro.
+   Tema claro por defecto; el oscuro se activa con [data-theme="dark"] o con
+   la preferencia del sistema (prefers-color-scheme).                        */
+
+:root {
+  /* Marca */
+  --brand-950: #061a33;
+  --brand-900: #0a2547;
+  --brand-800: #0f3466;
+  --brand-700: #13488c;
+  --brand-600: #1559c9;
+  --brand-500: #2f74e0;
+  --brand-100: #e3edfc;
+  --brand-50: #f2f7fe;
+  --gold-500: #f2a516;
+  --gold-400: #f7bd45;
+
+  /* Superficies y texto */
+  --background: #f4f6fa;
+  --surface: #ffffff;
+  --surface-muted: #eef2f7;
+  --foreground: #0d1b2e;
+  --muted-foreground: #5b6b82;
+  --border: #e1e7ef;
+  --input: #ccd5e1;
+  --ring: #2f74e0;
+
+  --primary: #1559c9;
+  --primary-foreground: #ffffff;
+  --accent: #f2a516;
+  --accent-foreground: #3a2400;
+  --accent-bg: #fff6e0;
+
+  /* Barra lateral (igual en ambos temas: identidad de marca) */
+  --sidebar: #0a2547;
+  --sidebar-2: #061a33;
+  --sidebar-foreground: #dbe6f7;
+  --sidebar-muted: #8ea3c4;
+  --sidebar-hover: #ffffff12;
+  --sidebar-active: #ffffff1f;
+  --sidebar-border: #ffffff14;
+
+  --success: #067647;
+  --success-bg: #e8f8ef;
+  --warning: #a64b00;
+  --warning-bg: #fff4e0;
+  --danger: #b42318;
+  --danger-bg: #fdeeec;
+  --info: #175cd3;
+  --info-bg: #ebf3ff;
+
+  --shadow-color: 215 40% 20%;
+  --radius: 0.75rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #070d18;
+    --surface: #0e1726;
+    --surface-muted: #152136;
+    --foreground: #e7edf7;
+    --muted-foreground: #93a3bd;
+    --border: #23314a;
+    --input: #31415e;
+    --ring: #5b9cff;
+    --primary: #4d8ef5;
+    --primary-foreground: #ffffff;
+    --accent: #f7bd45;
+    --accent-foreground: #2a1a00;
+    --accent-bg: #3a2a08;
+    --sidebar: #08182f;
+    --sidebar-2: #040e1d;
+    --success: #75e0a7;
+    --success-bg: #06301c;
+    --warning: #fdb022;
+    --warning-bg: #3f2405;
+    --danger: #fda29b;
+    --danger-bg: #4a150d;
+    --info: #84caff;
+    --info-bg: #0f264d;
+    --shadow-color: 220 60% 2%;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: #070d18;
+  --surface: #0e1726;
+  --surface-muted: #152136;
+  --foreground: #e7edf7;
+  --muted-foreground: #93a3bd;
+  --border: #23314a;
+  --input: #31415e;
+  --ring: #5b9cff;
+  --primary: #4d8ef5;
+  --primary-foreground: #ffffff;
+  --accent: #f7bd45;
+  --accent-foreground: #2a1a00;
+  --accent-bg: #3a2a08;
+  --sidebar: #08182f;
+  --sidebar-2: #040e1d;
+  --success: #75e0a7;
+  --success-bg: #06301c;
+  --warning: #fdb022;
+  --warning-bg: #3f2405;
+  --danger: #fda29b;
+  --danger-bg: #4a150d;
+  --info: #84caff;
+  --info-bg: #0f264d;
+  --shadow-color: 220 60% 2%;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-bg: var(--accent-bg);
+  --color-brand-950: var(--brand-950);
+  --color-brand-900: var(--brand-900);
+  --color-brand-800: var(--brand-800);
+  --color-brand-700: var(--brand-700);
+  --color-brand-600: var(--brand-600);
+  --color-brand-500: var(--brand-500);
+  --color-brand-100: var(--brand-100);
+  --color-brand-50: var(--brand-50);
+  --color-gold-500: var(--gold-500);
+  --color-gold-400: var(--gold-400);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-2: var(--sidebar-2);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 3px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --shadow-card: 0 1px 2px hsl(var(--shadow-color) / 0.06), 0 1px 3px hsl(var(--shadow-color) / 0.05);
+  --shadow-raised: 0 4px 12px -2px hsl(var(--shadow-color) / 0.12), 0 2px 4px -2px hsl(var(--shadow-color) / 0.08);
+  /* Fuentes del sistema: cero descargas, funciona sin internet y sin salto de maquetación. */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+html {
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+/* Cifras alineadas en tablas y tarjetas de dinero */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fondo de marca (login y cabecera de la barra lateral) */
+.bg-brand-gradient {
+  background:
+    radial-gradient(120% 80% at 100% 0%, color-mix(in srgb, var(--brand-500) 35%, transparent) 0%, transparent 60%),
+    linear-gradient(160deg, var(--brand-800) 0%, var(--brand-950) 100%);
+}
+
+/* Scrollbar discreta */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-input) transparent;
+}
+
+/* Foco visible y consistente para teclado */
+:focus-visible {
+  outline-color: var(--color-ring);
+}
+
+/* Respeta a quien pide menos movimiento */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

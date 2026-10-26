@@ -1,0 +1,40 @@
+# Blueprint de Render para el CRM de Agencia Demo (versión web).
+# Render lo lee solo: New + → Blueprint → elige el repositorio.
+# Las claves NO van aquí: Render te las pide al crear el servicio (sync: false).
+services:
+  - type: web
+    name: crm-ats
+    runtime: node
+    plan: free
+    region: ohio
+    # devDependencies hacen falta para compilar (typescript, tailwind, prisma).
+    buildCommand: npm ci --include=dev && npx prisma generate && npx prisma migrate deploy && node node_modules/next/dist/bin/next build
+    startCommand: node node_modules/next/dist/bin/next start -H 0.0.0.0 -p $PORT
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # El plan gratis tiene 512 MB: se limita la memoria del compilador/servidor.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=400"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: APP_TIMEZONE
+        value: America/Bogota
+      - key: STORAGE_DRIVER
+        value: supabase
+      - key: SUPABASE_BUCKET
+        value: crm-files
+      # Render inventa una clave larga y aleatoria; no tienes que escribirla.
+      - key: AUTH_SECRET
+        generateValue: true
+      # ↓ Estas las pegas tú en Render (ver DESPLIEGUE-WEB.md). Sin valor aquí.
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

@@ -1,0 +1,655 @@
+// ───────────────────────────────────────────────────────────────────────────
+//  CRM / ERP ligero para agencia de viajes — Modelo de datos (versión web: PostgreSQL)
+//
+//  Convenciones (ver ARQUITECTURA.md §9):
+//   · id: UUID (cuid) en toda entidad.
+//   · Importes: BigInt en unidades mínimas + campo `*Currency` (código ISO).
+//     NUNCA float ni Decimal. Cero decimales para COP, dos para USD.
+//   · Fechas "puras" (viaje, vigencia, cuota, valor de asiento): String
+//     "YYYY-MM-DD", sin hora ni zona horaria.
+//   · Marcas de tiempo del sistema (createdAt, confirmedAt...): DateTime UTC.
+//   · Se usan String validados en la capa de dominio en lugar de enums de Postgres
+//     (ver src/core/domain/enums.ts). Esto además hace los estados configurables.
+//   · Borrado lógico: `archivedAt` (nulo = vigente). Nada crítico se borra.
+//   · Los estados DERIVADOS (estado de pago, mora, vigencia por expirar...) NO
+//     viven aquí: los calcula el motor de reglas en cada lectura.
+// ───────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // Neon: cadena CON pooler (la usa el programa)
+  directUrl = env("DIRECT_URL") // Neon: cadena SIN pooler (la usan las migraciones)
+}
+
+// ── Usuarios, roles y sesiones ─────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         String    @default("standard") // admin | standard  (extensible)
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  archivedAt   DateTime?
+
+  sessions       Session[]
+  auditLogs      AuditLog[]
+  createdEntries LedgerEntry[] @relation("LedgerCreatedBy")
+  voidedEntries  LedgerEntry[] @relation("LedgerVoidedBy")
+
+  @@index([role])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique // hash del token de la cookie; nunca el token en claro
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String?
+  ip        String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ── Maestros ───────────────────────────────────────────────────────────────
+
+model Seller {
+  id                 String    @id @default(cuid())
+  name               String
+  phone              String?
+  email              String?
+  active             Boolean   @default(true)
+  // Comisión por defecto para ventas futuras (se congela en cada contrato)
+  commissionKind     String    @default("percentage") // percentage | fixed
+  commissionValue    String    @default("0") // % (ej "10") o importe fijo minor units como texto
+  commissionCurrency String    @default("COP") // solo aplica si commissionKind = fixed
+  // El vendedor cobra su comisión directamente: los clientes pagan a su cuenta
+  // y a la agencia le llega el pago menos su comisión (RN-11 — comisión retenida).
+  retainsCommission  Boolean   @default(false)
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  archivedAt         DateTime?
+
+  contracts        Contract[]
+  pendingInventory PendingInventory[]
+  commissions      Commission[]
+
+  @@index([active])
+}
+
+model Destination {
+  id         String    @id @default(cuid())
+  name       String
+  country    String    @default("Colombia")
+  scope      String // nacional | internacional
+  color      String    @default("#2563eb") // hex, configurable
+  active     Boolean   @default(true)
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+
+  hotels           Hotel[]
+  contracts        Contract[]
+  pendingInventory PendingInventory[]
+
+  @@unique([name])
+  @@index([scope])
+  @@index([active])
+}
+
+model Hotel {
+  id            String      @id @default(cuid())
+  name          String
+  destinationId String
+  destination   Destination @relation(fields: [destinationId], references: [id])
+  city          String?
+  country       String?
+  active        Boolean     @default(true)
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  archivedAt    DateTime?
+
+  contracts        Contract[]
+  pendingInventory PendingInventory[]
+
+  @@index([destinationId])
+  @@index([active])
+}
+
+model Client {
+  id         String    @id @default(cuid())
+  fullName   String
+  documentId String?
+  phone      String?
+  email      String?
+  city       String?
+  address    String?
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  createdBy  String?
+  archivedAt DateTime?
+
+  contracts   Contract[]
+  transfersIn Contract[] @relation("ContractTransferHistory")
+
+  @@index([fullName])
+  @@index([documentId])
+  @@index([phone])
+}
+
+// Configuración del sistema: pares clave/valor tipados.
+model Setting {
+  key       String   @id
+  value     String // JSON serializado
+  type      String   @default("string") // string | number | boolean | json
+  group     String   @default("general")
+  label     String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+// ── Núcleo comercial ──────────────────────────────────────────────────────
+
+// Varias personas, mismo viaje: contratos separados que se organizan y se
+// pueden pagar juntos, sin que esto afecte el saldo ni los estados por
+// contrato (RN-03 sigue siendo por contrato).
+model ContractGroup {
+  id         String    @id @default(cuid())
+  name       String
+  notes      String?
+  createdAt  DateTime  @default(now())
+  createdBy  String?
+  archivedAt DateTime?
+
+  contracts Contract[]
+  refunds   Refund[]
+
+  @@index([archivedAt])
+}
+
+model Contract {
+  id     String @id @default(cuid())
+  number String @unique // CTR-2026-000123 (secuencia con unicidad)
+
+  clientId String
+  client   Client  @relation(fields: [clientId], references: [id])
+  sellerId String?
+  seller   Seller? @relation(fields: [sellerId], references: [id])
+
+  // Clasificación
+  modality      String // fecha_abierta | fecha_cerrada
+  tripType      String // nacional | internacional
+  destinationId String
+  destination   Destination @relation(fields: [destinationId], references: [id])
+  hotelId       String?
+  hotel         Hotel?      @relation(fields: [hotelId], references: [id])
+
+  // Fechas puras (YYYY-MM-DD)
+  saleDate      String? // fecha de venta
+  vigenciaStart String? // ventana de vigencia (fecha abierta)
+  vigenciaEnd   String?
+  travelDate    String? // fecha de viaje (fecha cerrada / programada)
+  returnDate    String?
+  days          Int?
+  nights        Int?
+
+  // Dinero (moneda única del contrato — RN-13)
+  priceAmount BigInt // precio bruto en unidades mínimas
+  currency    String @default("COP")
+
+  // Parámetros CONGELADOS en el momento de la venta (RN-02 / RN-09)
+  liquidationLeadDays Int // días de anticipación para liquidación total
+  commissionKind      String @default("percentage") // percentage | fixed
+  commissionValue     String @default("0")
+  commissionCurrency  String @default("COP")
+  commissionAccrual   String @default("on_full_payment") // on_sale | on_full_payment | on_travel
+
+  // Estados ALMACENADOS (decisiones humanas — ver ARQUITECTURA.md §6)
+  lifecycleState      String @default("borrador") // borrador | activo | cancelado | finalizado
+  exceptionResolution String @default("ninguna") // ninguna | mantener_activo | fecha_extendida | incumplido | excepcion_autorizada
+
+  // Cancelación (RN-16) — campo estructurado, no en notas
+  cancellationReason String?
+  cancellationCode   String? // desistimiento_cliente | no_pago | fuerza_mayor | error_agencia | otro
+  cancelledAt        DateTime?
+  cancelledBy        String?
+
+  // Traspaso de titular (§23.1) — trazabilidad mínima
+  transferredFromClientId String?
+  transferredFromClient   Client?   @relation("ContractTransferHistory", fields: [transferredFromClientId], references: [id])
+  transferredAt           DateTime?
+
+  // Grupo de viaje (varias personas, mismo viaje, contratos separados)
+  groupId String?
+  group   ContractGroup? @relation(fields: [groupId], references: [id])
+
+  // Empresa que emitió el contrato: "DEMO" (Agencia Demo) u otra.
+  issuer String @default("DEMO")
+
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  createdBy  String?
+  archivedAt DateTime?
+  version    Int       @default(0) // bloqueo optimista (§22)
+
+  passengers           ContractPassenger?
+  reservation          Reservation?
+  ledger               LedgerEntry[]
+  installments         Installment[]
+  commission           Commission?
+  inventoryAssignments InventoryAssignment[]
+  refunds              Refund[]
+
+  @@index([clientId])
+  @@index([sellerId])
+  @@index([destinationId])
+  @@index([travelDate])
+  @@index([modality])
+  @@index([lifecycleState])
+  @@index([groupId])
+}
+
+model ContractPassenger {
+  id         String   @id @default(cuid())
+  contractId String   @unique
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  adults     Int      @default(2)
+  children   Int      @default(0)
+  infants    Int      @default(0)
+  packs      Int      @default(1)
+  // Detalle nominal (extensión futura para viajes internacionales)
+  roster     String? // JSON: [{name, documentId, birthDate, kind}]
+  updatedAt  DateTime @updatedAt
+}
+
+model Reservation {
+  id         String   @id @default(cuid())
+  contractId String   @unique
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  checkIn  String // YYYY-MM-DD
+  checkOut String // YYYY-MM-DD
+  state    String @default("pendiente_confirmacion") // pendiente_confirmacion | confirmada | requiere_cambio_fecha | cancelada | finalizada
+
+  confirmedAt DateTime?
+  confirmedBy String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  version     Int       @default(0)
+
+  @@index([checkIn])
+  @@index([state])
+}
+
+// ── Financiero: libro de asientos inmutable ───────────────────────────────
+
+model LedgerEntry {
+  id         String   @id @default(cuid())
+  contractId String
+  contract   Contract @relation(fields: [contractId], references: [id])
+
+  // Tipos: pago_recibido | aplicacion_de_anticipo | comision_retenida
+  //        | descuento | castigo | reembolso
+  kind      String
+  valueDate String // YYYY-MM-DD (fecha de valor)
+
+  // Importe RECIBIDO (moneda real del movimiento)
+  receivedAmount   BigInt
+  receivedCurrency String
+
+  // Importe APLICADO (siempre en la moneda del contrato — RN-13)
+  appliedAmount      BigInt
+  appliedCurrency    String
+  exchangeRate       String  @default("1") // decimal como texto; congelada, jamás se recalcula
+  exchangeRateDate   String?
+  exchangeRateSource String?
+
+  reference String?
+  method    String? // transferencia | efectivo | tarjeta | otro
+  reason    String? // motivo (obligatorio para descuento/castigo/reembolso/comision_retenida)
+
+  // Etiqueta compartida: varios asientos (de distintos contratos) creados por
+  // un mismo pago de grupo. Sin relación propia; sólo para agruparlos.
+  groupPaymentId String?
+
+  installmentId String?
+  installment   Installment? @relation(fields: [installmentId], references: [id])
+
+  inventoryAssignmentId String?              @unique
+  inventoryAssignment   InventoryAssignment? @relation(fields: [inventoryAssignmentId], references: [id])
+
+  // Anulación (nunca se edita ni se borra — RN-11)
+  voided     Boolean   @default(false)
+  voidReason String?
+  voidedAt   DateTime?
+  voidedById String?
+  voidedBy   User?     @relation("LedgerVoidedBy", fields: [voidedById], references: [id])
+
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("LedgerCreatedBy", fields: [createdById], references: [id])
+
+  receipts      Receipt[]
+  refundPayment RefundPayment?
+
+  @@index([contractId])
+  @@index([kind])
+  @@index([valueDate])
+  @@index([installmentId])
+  @@index([groupPaymentId])
+}
+
+model Receipt {
+  id            String      @id @default(cuid())
+  ledgerEntryId String
+  ledgerEntry   LedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Cascade)
+  documentId    String
+  document      Document    @relation(fields: [documentId], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@index([ledgerEntryId])
+}
+
+model Installment {
+  id             String   @id @default(cuid())
+  contractId     String
+  contract       Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  sequence       Int
+  dueDate        String // YYYY-MM-DD
+  expectedAmount BigInt
+  currency       String // = moneda del contrato
+  manualState    String   @default("vigente") // vigente | cancelada
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  ledgerEntries LedgerEntry[]
+
+  @@index([contractId])
+  @@index([dueDate])
+}
+
+// Comisión esperada + su posterior liquidación al vendedor (cuentas por pagar).
+model Commission {
+  id         String   @id @default(cuid())
+  contractId String   @unique
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  sellerId   String
+  seller     Seller   @relation(fields: [sellerId], references: [id])
+
+  expectedAmount BigInt
+  currency       String
+  accrual        String @default("on_full_payment")
+
+  settledAt     DateTime?
+  settledAmount BigInt?
+  settlementRef String?
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerId])
+}
+
+// Histórico de tasas — SOLO para sugerir el valor al registrar un asiento.
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  date      String // YYYY-MM-DD
+  base      String // ej USD
+  quote     String // ej COP
+  rate      String // decimal como texto
+  source    String   @default("manual")
+  createdAt DateTime @default(now())
+
+  @@unique([date, base, quote, source])
+  @@index([base, quote])
+}
+
+// ── Inventario anticipado (cupos) ─────────────────────────────────────────
+
+model PendingInventory {
+  id            String      @id @default(cuid())
+  sellerId      String
+  seller        Seller      @relation(fields: [sellerId], references: [id])
+  purchaseDate  String // YYYY-MM-DD
+  destinationId String
+  destination   Destination @relation(fields: [destinationId], references: [id])
+  hotelId       String?
+  hotel         Hotel?      @relation(fields: [hotelId], references: [id])
+  travelDate    String? // si existe
+  seats         Int // cupos / packs comprados
+  amount        BigInt // valor total pagado por el bloque
+  currency      String      @default("COP")
+  reference     String?
+  notes         String?
+  state         String      @default("disponible") // disponible | parcialmente_asignado | asignado | cancelado | vencido
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  createdBy     String?
+  archivedAt    DateTime?
+
+  payments    InventoryPayment[]
+  assignments InventoryAssignment[]
+
+  @@index([sellerId])
+  @@index([state])
+  @@index([travelDate])
+}
+
+// Lo que el vendedor pagó por el cupo (libro propio del cupo).
+model InventoryPayment {
+  id                 String           @id @default(cuid())
+  pendingInventoryId String
+  pendingInventory   PendingInventory @relation(fields: [pendingInventoryId], references: [id], onDelete: Cascade)
+  valueDate          String
+  amount             BigInt
+  currency           String
+  reference          String?
+  method             String?
+  voided             Boolean          @default(false)
+  voidReason         String?
+  createdAt          DateTime         @default(now())
+  createdBy          String?
+
+  @@index([pendingInventoryId])
+}
+
+model InventoryAssignment {
+  id                 String           @id @default(cuid())
+  pendingInventoryId String
+  pendingInventory   PendingInventory @relation(fields: [pendingInventoryId], references: [id])
+  contractId         String
+  contract           Contract         @relation(fields: [contractId], references: [id])
+
+  seats           Int
+  appliedAmount   BigInt // importe aplicado al contrato (moneda del contrato)
+  appliedCurrency String
+  exchangeRate    String @default("1")
+  valueDate       String
+
+  reversed      Boolean   @default(false)
+  reverseReason String?
+  reversedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  ledgerEntry LedgerEntry?
+
+  @@index([pendingInventoryId])
+  @@index([contractId])
+}
+
+// ── Reembolsos ────────────────────────────────────────────────────────────
+// Solicitud de devolución de dinero (del cliente, por derecho de petición,
+// tutela, o porque la agencia canceló el viaje). Se sigue de principio a fin:
+// solicitado → en trámite → aprobado → pagado (o rechazado / desistido).
+// Puede ir ligada a un contrato, a un grupo, o a ninguno (cliente que aún no
+// está en el sistema). Cada pago al cliente es un RefundPayment; si hay
+// contrato, además crea un asiento `reembolso` en su libro (RN-11 intacta).
+model Refund {
+  id         String         @id @default(cuid())
+  number     String         @unique // RMB-2026-0001
+  contractId String?
+  contract   Contract?      @relation(fields: [contractId], references: [id])
+  groupId    String?
+  group      ContractGroup? @relation(fields: [groupId], references: [id])
+
+  clientName   String // quien pide la devolución (aunque no haya contrato)
+  clientDoc    String?
+  contactEmail String?
+  contactPhone String?
+  people       Int? // nº de personas que cubre
+
+  requestedAt String // YYYY-MM-DD
+  channel     String // correo | derecho_peticion | tutela | superintendencia | whatsapp | telefono | presencial | otro
+  reasonCode  String // cancelacion_agencia | desistimiento_cliente | incumplimiento | cambio_no_aceptado | otro
+  reason      String
+  dueDate     String? // plazo legal o comprometido para responder/pagar
+
+  currency        String  @default("COP")
+  requestedAmount BigInt? // lo que pide el cliente
+  agreedAmount    BigInt? // lo que la agencia acepta devolver
+
+  state       String    @default("solicitado") // solicitado | en_tramite | aprobado | pagado | rechazado | desistido
+  stateNote   String?
+  resolvedAt  DateTime?
+  emailThread String? // enlace al hilo de correo de origen
+  notes       String?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  createdBy  String?
+  archivedAt DateTime?
+
+  payments RefundPayment[]
+
+  @@index([state])
+  @@index([contractId])
+  @@index([groupId])
+}
+
+model RefundPayment {
+  id            String       @id @default(cuid())
+  refundId      String
+  refund        Refund       @relation(fields: [refundId], references: [id])
+  paidDate      String // YYYY-MM-DD
+  amount        BigInt // en la moneda del reembolso
+  method        String?
+  reference     String?
+  notes         String?
+  documentId    String? // comprobante del pago al cliente
+  ledgerEntryId String?      @unique // asiento `reembolso` en el contrato (si lo hay)
+  ledgerEntry   LedgerEntry? @relation(fields: [ledgerEntryId], references: [id])
+
+  voided     Boolean   @default(false)
+  voidReason String?
+  voidedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  @@index([refundId])
+}
+
+// ── Transversales ─────────────────────────────────────────────────────────
+
+model Document {
+  id           String    @id @default(cuid())
+  kind         String // contrato | contrato_firmado | comprobante | voucher | confirmacion_hotel | otro
+  originalName String
+  storagePath  String // ruta interna: data/files/{año}/{uuid}.{ext}
+  sha256       String
+  sizeBytes    Int
+  mimeType     String
+  entityType   String // contract | client | reservation | pending_inventory | ...
+  entityId     String
+  createdAt    DateTime  @default(now())
+  createdBy    String?
+  archivedAt   DateTime?
+
+  receipts Receipt[]
+
+  @@index([entityType, entityId])
+  @@index([sha256])
+}
+
+model Note {
+  id         String    @id @default(cuid())
+  entityType String
+  entityId   String
+  content    String
+  pinned     Boolean   @default(false)
+  priority   String    @default("normal") // normal | alta
+  author     String?
+  createdAt  DateTime  @default(now())
+  archivedAt DateTime?
+
+  @@index([entityType, entityId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String // create | update | archive | restore | state_change | payment | void | confirm | cancel | ...
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  at         DateTime @default(now())
+  before     String? // JSON
+  after      String? // JSON
+  summary    String?
+
+  @@index([entityType, entityId])
+  @@index([at])
+}
+
+// Solo se persiste el ESTADO DE INTERACCIÓN del usuario con una alerta.
+// La alerta en sí se deriva en cada consulta (ver §13).
+model AlertState {
+  id            String   @id @default(cuid())
+  alertType     String
+  entityType    String
+  entityId      String
+  referenceDate String // YYYY-MM-DD — identifica la instancia de la alerta
+  status        String   @default("nueva") // nueva | leida | pospuesta | descartada
+  snoozeUntil   String?
+  updatedAt     DateTime @updatedAt
+  updatedBy     String?
+
+  @@unique([alertType, entityType, entityId, referenceDate])
+}
+
+model BackupRecord {
+  id            String   @id @default(cuid())
+  path          String
+  sizeBytes     Int
+  schemaVersion String
+  tableCounts   String // JSON
+  checksum      String
+  validation    String   @default("ok") // ok | failed
+  kind          String   @default("auto") // auto | manual | startup
+  createdAt     DateTime @default(now())
+}
+
+// Secuencia para el número amigable de contrato (CTR-YYYY-NNNNNN).
+model Counter {
+  key   String @id // ej "contract:2026"
+  value Int    @default(0)
+}
